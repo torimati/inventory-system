@@ -4,7 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>재고 및 발주 관리</title>
-  <link rel="stylesheet" href="css/style.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <style>
     body {
@@ -13,6 +12,9 @@
     }
     h1 {
       text-align: center;
+    }
+    select {
+      margin-bottom: 20px;
     }
     table {
       width: 100%;
@@ -60,12 +62,17 @@
 <body>
   <h1>📋 재고 및 발주 관리</h1>
 
+  <label for="branchSelect">지점 선택: </label>
+  <select id="branchSelect" onchange="changeBranch(this.value)">
+    <option value="원신흥점">원신흥점</option>
+    <option value="유천점">유천점</option>
+  </select>
+  <input type="text" id="editorName" placeholder="작성자 이름 입력" style="margin-left: 10px;">
+
   <h2>재고 현황</h2>
   <button onclick="downloadExcel()">재고 엑셀 다운로드</button>
   <input type="file" id="uploadExcel" accept=".xlsx" onchange="uploadExcel(event)" />
   <button onclick="addStockItem()">➕ 품목 추가</button>
-  <input type="text" id="editorName" placeholder="작성자 이름 입력" style="margin-left: 10px;">
-
   <table>
     <thead>
       <tr>
@@ -106,36 +113,33 @@
   </div>
 
   <script>
-    let stockData = JSON.parse(localStorage.getItem("stockData")) || [
-      { name: "청포도 타르트", category: "디저트", quantity: 4, min: 5 },
-      { name: "아메리카노 원두", category: "원두", quantity: 10, min: 3 },
-      { name: "쇼핑백", category: "소모품", quantity: 1, min: 5 }
-    ];
+    let currentBranch = localStorage.getItem("branch") || "원신흥점";
+    document.getElementById("branchSelect").value = currentBranch;
 
-    let orderData = JSON.parse(localStorage.getItem("orderData")) || [
-      { item: "청포도 타르트", date: "2025-05-22", quantity: 3, price: 2500, memo: "주간 발주" },
-      { item: "쇼핑백", date: "2025-05-20", quantity: 10, price: 300, memo: "소모품" }
-    ];
-
-    let updateLog = JSON.parse(localStorage.getItem("updateLog")) || [];
-
-    function logUpdate(action) {
-      const author = document.getElementById("editorName").value || "익명";
-      const timestamp = new Date().toLocaleString();
-      updateLog.unshift(`${timestamp} - ${author}: ${action}`);
-      updateLog = updateLog.slice(0, 3);
-      localStorage.setItem("updateLog", JSON.stringify(updateLog));
-      renderLog();
+    function getKey(key) {
+      return `${key}_${currentBranch}`;
     }
 
-    function renderLog() {
-      const logList = document.getElementById("updateLog");
-      logList.innerHTML = updateLog.map(entry => `<li>${entry}</li>`).join("");
-    }
+    let stockData = JSON.parse(localStorage.getItem(getKey("stockData"))) || [];
+    let orderData = JSON.parse(localStorage.getItem(getKey("orderData"))) || [];
+    let updateLog = JSON.parse(localStorage.getItem(getKey("updateLog"))) || [];
 
     function saveData() {
-      localStorage.setItem("stockData", JSON.stringify(stockData));
-      localStorage.setItem("orderData", JSON.stringify(orderData));
+      localStorage.setItem(getKey("stockData"), JSON.stringify(stockData));
+      localStorage.setItem(getKey("orderData"), JSON.stringify(orderData));
+      localStorage.setItem(getKey("updateLog"), JSON.stringify(updateLog));
+      localStorage.setItem("branch", currentBranch);
+    }
+
+    function changeBranch(branch) {
+      currentBranch = branch;
+      localStorage.setItem("branch", currentBranch);
+      stockData = JSON.parse(localStorage.getItem(getKey("stockData"))) || [];
+      orderData = JSON.parse(localStorage.getItem(getKey("orderData"))) || [];
+      updateLog = JSON.parse(localStorage.getItem(getKey("updateLog"))) || [];
+      renderTable();
+      renderOrders();
+      renderLog();
     }
 
     function renderTable() {
@@ -176,53 +180,67 @@
       });
     }
 
+    function renderLog() {
+      const logList = document.getElementById("updateLog");
+      logList.innerHTML = updateLog.map(entry => `<li>${entry}</li>`).join("");
+    }
+
+    function logUpdate(action) {
+      const author = document.getElementById("editorName").value || "익명";
+      const timestamp = new Date().toLocaleString();
+      updateLog.unshift(`${timestamp} - ${author}: ${action}`);
+      updateLog = updateLog.slice(0, 3);
+      saveData();
+      renderLog();
+    }
+
     function updateStock(index, key, value) {
       stockData[index][key] = key === 'quantity' || key === 'min' ? parseInt(value) : value;
+      logUpdate(`재고 항목 수정 - ${key}`);
       saveData();
       renderTable();
-      logUpdate(`재고 항목 수정 - ${key}`);
     }
 
     function updateOrder(index, key, value) {
       orderData[index][key] = key === 'quantity' || key === 'price' ? parseInt(value) : value;
+      logUpdate(`발주 항목 수정 - ${key}`);
       saveData();
       renderOrders();
-      logUpdate(`발주 항목 수정 - ${key}`);
     }
 
     function updateQuantity(index, change) {
       stockData[index].quantity = Math.max(0, stockData[index].quantity + change);
+      logUpdate(`수량 ${change > 0 ? '입고' : '출고'} 처리`);
       saveData();
       renderTable();
-      logUpdate(`수량 ${change > 0 ? '입고' : '출고'} 처리`);
     }
 
     function addStockItem() {
       stockData.push({ name: "", category: "", quantity: 0, min: 0 });
+      logUpdate("재고 항목 추가");
       saveData();
       renderTable();
-      logUpdate("재고 항목 추가");
     }
 
     function deleteStockItem(index) {
       stockData.splice(index, 1);
+      logUpdate("재고 항목 삭제");
       saveData();
       renderTable();
-      logUpdate("재고 항목 삭제");
     }
 
     function addOrderItem() {
       orderData.push({ item: "", date: "", quantity: 0, price: 0, memo: "" });
+      logUpdate("발주 항목 추가");
       saveData();
       renderOrders();
-      logUpdate("발주 항목 추가");
     }
 
     function deleteOrderItem(index) {
       orderData.splice(index, 1);
+      logUpdate("발주 항목 삭제");
       saveData();
       renderOrders();
-      logUpdate("발주 항목 삭제");
     }
 
     function downloadExcel() {
@@ -241,14 +259,11 @@
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const jsonData = XLSX.utils.sheet_to_json(worksheet);
         stockData = jsonData.map(row => ({
-          name: row.name || row["name"],
-          category: row.category || row["category"],
-          quantity: parseInt(row.quantity || row["quantity"]),
-          min: parseInt(row.min || row["min"])
+          name: row.name, category: row.category, quantity: parseInt(row.quantity), min: parseInt(row.min)
         }));
+        logUpdate("재고 엑셀 업로드");
         saveData();
         renderTable();
-        logUpdate("재고 엑셀 업로드");
       };
       reader.readAsArrayBuffer(file);
     }
@@ -269,15 +284,11 @@
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const jsonData = XLSX.utils.sheet_to_json(worksheet);
         orderData = jsonData.map(row => ({
-          item: row.item || row["item"],
-          date: row.date || row["date"],
-          quantity: parseInt(row.quantity || row["quantity"]),
-          price: parseInt(row.price || row["price"]),
-          memo: row.memo || row["memo"]
+          item: row.item, date: row.date, quantity: parseInt(row.quantity), price: parseInt(row.price), memo: row.memo
         }));
+        logUpdate("발주 엑셀 업로드");
         saveData();
         renderOrders();
-        logUpdate("발주 엑셀 업로드");
       };
       reader.readAsArrayBuffer(file);
     }
