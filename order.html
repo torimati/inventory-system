@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>재고 및 발주 관리</title>
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 20px;
+    }
+    h1 {
+      text-align: center;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 20px;
+    }
+    th, td {
+      border: 1px solid #ccc;
+      padding: 10px;
+      text-align: center;
+    }
+    th {
+      background-color: #f0f0f0;
+    }
+    .low-stock input {
+      color: red;
+      font-weight: bold;
+    }
+    .controls button {
+      margin: 0 5px;
+    }
+    input[type="number"], input[type="text"], input[type="date"] {
+      width: 90%;
+    }
+    #logContainer {
+      margin-top: 40px;
+      background-color: #f9f9f9;
+      padding: 10px;
+      border: 1px solid #ddd;
+    }
+    #logContainer ul {
+      padding-left: 20px;
+    }
+    @media (max-width: 600px) {
+      table, th, td {
+        font-size: 12px;
+      }
+      input, button {
+        width: 100%;
+        box-sizing: border-box;
+      }
+    }
+  </style>
+</head>
+<body>
+  <h1>📋 재고 및 발주 관리</h1>
+
+  <h2>재고 현황</h2>
+  <button onclick="downloadExcel()">재고 엑셀 다운로드</button>
+  <input type="file" id="uploadExcel" accept=".xlsx" onchange="uploadExcel(event)" />
+  <button onclick="addStockItem()">➕ 품목 추가</button>
+  <input type="text" id="editorName" placeholder="작성자 이름 입력" style="margin-left: 10px;">
+
+  <table>
+    <thead>
+      <tr>
+        <th>품목명</th>
+        <th>카테고리</th>
+        <th>현재 수량</th>
+        <th>최소 수량</th>
+        <th>입고</th>
+        <th>출고</th>
+        <th>삭제</th>
+      </tr>
+    </thead>
+    <tbody id="stockTable"></tbody>
+  </table>
+
+  <h2>발주 목록</h2>
+  <button onclick="downloadOrderExcel()">발주 엑셀 다운로드</button>
+  <input type="file" id="uploadOrderExcel" accept=".xlsx" onchange="uploadOrderExcel(event)" />
+  <button onclick="addOrderItem()">➕ 발주 추가</button>
+  <table>
+    <thead>
+      <tr>
+        <th>발주 품목</th>
+        <th>발주일</th>
+        <th>수량</th>
+        <th>단가</th>
+        <th>총 금액</th>
+        <th>메모</th>
+        <th>삭제</th>
+      </tr>
+    </thead>
+    <tbody id="orderTable"></tbody>
+  </table>
+
+  <div id="logContainer">
+    <h3>🕒 최근 수정 기록 (최대 3개)</h3>
+    <ul id="updateLog"></ul>
+  </div>
+
+  <script>
+    let stockData = JSON.parse(localStorage.getItem("stockData")) || [
+      { name: "청포도 타르트", category: "디저트", quantity: 4, min: 5 },
+      { name: "아메리카노 원두", category: "원두", quantity: 10, min: 3 },
+      { name: "쇼핑백", category: "소모품", quantity: 1, min: 5 }
+    ];
+
+    let orderData = JSON.parse(localStorage.getItem("orderData")) || [
+      { item: "청포도 타르트", date: "2025-05-22", quantity: 3, price: 2500, memo: "주간 발주" },
+      { item: "쇼핑백", date: "2025-05-20", quantity: 10, price: 300, memo: "소모품" }
+    ];
+
+    let updateLog = JSON.parse(localStorage.getItem("updateLog")) || [];
+
+    function logUpdate(action) {
+      const author = document.getElementById("editorName").value || "익명";
+      const timestamp = new Date().toLocaleString();
+      updateLog.unshift(`${timestamp} - ${author}: ${action}`);
+      updateLog = updateLog.slice(0, 3);
+      localStorage.setItem("updateLog", JSON.stringify(updateLog));
+      renderLog();
+    }
+
+    function renderLog() {
+      const logList = document.getElementById("updateLog");
+      logList.innerHTML = updateLog.map(entry => `<li>${entry}</li>`).join("");
+    }
+
+    function saveData() {
+      localStorage.setItem("stockData", JSON.stringify(stockData));
+      localStorage.setItem("orderData", JSON.stringify(orderData));
+    }
+
+    function renderTable() {
+      const stockTable = document.getElementById("stockTable");
+      stockTable.innerHTML = "";
+      stockData.forEach((item, index) => {
+        const isLow = item.quantity < item.min;
+        stockTable.innerHTML += `
+          <tr>
+            <td><input type="text" value="${item.name}" onchange="updateStock(${index}, 'name', this.value)" /></td>
+            <td><input type="text" value="${item.category}" onchange="updateStock(${index}, 'category', this.value)" /></td>
+            <td class="${isLow ? 'low-stock' : ''}"><input type="number" value="${item.quantity}" onchange="updateStock(${index}, 'quantity', this.value)" /></td>
+            <td><input type="number" value="${item.min}" onchange="updateStock(${index}, 'min', this.value)" /></td>
+            <td class="controls"><button onclick="updateQuantity(${index}, 1)">+1</button></td>
+            <td class="controls"><button onclick="updateQuantity(${index}, -1)">-1</button></td>
+            <td><button onclick="deleteStockItem(${index})">❌</button></td>
+          </tr>
+        `;
+      });
+    }
+
+    function renderOrders() {
+      const orderTable = document.getElementById("orderTable");
+      orderTable.innerHTML = "";
+      orderData.forEach((order, index) => {
+        const total = order.quantity * order.price;
+        orderTable.innerHTML += `
+          <tr>
+            <td><input type="text" value="${order.item}" onchange="updateOrder(${index}, 'item', this.value)" /></td>
+            <td><input type="date" value="${order.date}" onchange="updateOrder(${index}, 'date', this.value)" /></td>
+            <td><input type="number" value="${order.quantity}" onchange="updateOrder(${index}, 'quantity', this.value)" /></td>
+            <td><input type="number" value="${order.price}" onchange="updateOrder(${index}, 'price', this.value)" /></td>
+            <td>${total.toLocaleString()}원</td>
+            <td><input type="text" value="${order.memo}" onchange="updateOrder(${index}, 'memo', this.value)" /></td>
+            <td><button onclick="deleteOrderItem(${index})">❌</button></td>
+          </tr>
+        `;
+      });
+    }
+
+    function updateStock(index, key, value) {
+      stockData[index][key] = key === 'quantity' || key === 'min' ? parseInt(value) : value;
+      saveData();
+      renderTable();
+      logUpdate(`재고 항목 수정 - ${key}`);
+    }
+
+    function updateOrder(index, key, value) {
+      orderData[index][key] = key === 'quantity' || key === 'price' ? parseInt(value) : value;
+      saveData();
+      renderOrders();
+      logUpdate(`발주 항목 수정 - ${key}`);
+    }
+
+    function updateQuantity(index, change) {
+      stockData[index].quantity = Math.max(0, stockData[index].quantity + change);
+      saveData();
+      renderTable();
+      logUpdate(`수량 ${change > 0 ? '입고' : '출고'} 처리`);
+    }
+
+    function addStockItem() {
+      stockData.push({ name: "", category: "", quantity: 0, min: 0 });
+      saveData();
+      renderTable();
+      logUpdate("재고 항목 추가");
+    }
+
+    function deleteStockItem(index) {
+      stockData.splice(index, 1);
+      saveData();
+      renderTable();
+      logUpdate("재고 항목 삭제");
+    }
+
+    function addOrderItem() {
+      orderData.push({ item: "", date: "", quantity: 0, price: 0, memo: "" });
+      saveData();
+      renderOrders();
+      logUpdate("발주 항목 추가");
+    }
+
+    function deleteOrderItem(index) {
+      orderData.splice(index, 1);
+      saveData();
+      renderOrders();
+      logUpdate("발주 항목 삭제");
+    }
+
+    function downloadExcel() {
+      const worksheet = XLSX.utils.json_to_sheet(stockData);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "StockData");
+      XLSX.writeFile(workbook, "stock_data.xlsx");
+    }
+
+    function uploadExcel(event) {
+      const file = event.target.files[0];
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: "array" });
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        const jsonData = XLSX.utils.sheet_to_json(worksheet);
+        stockData = jsonData.map(row => ({
+          name: row.name || row["name"],
+          category: row.category || row["category"],
+          quantity: parseInt(row.quantity || row["quantity"]),
+          min: parseInt(row.min || row["min"])
+        }));
+        saveData();
+        renderTable();
+        logUpdate("재고 엑셀 업로드");
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    function downloadOrderExcel() {
+      const worksheet = XLSX.utils.json_to_sheet(orderData);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "OrderData");
+      XLSX.writeFile(workbook, "order_data.xlsx");
+    }
+
+    function uploadOrderExcel(event) {
+      const file = event.target.files[0];
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: "array" });
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        const jsonData = XLSX.utils.sheet_to_json(worksheet);
+        orderData = jsonData.map(row => ({
+          item: row.item || row["item"],
+          date: row.date || row["date"],
+          quantity: parseInt(row.quantity || row["quantity"]),
+          price: parseInt(row.price || row["price"]),
+          memo: row.memo || row["memo"]
+        }));
+        saveData();
+        renderOrders();
+        logUpdate("발주 엑셀 업로드");
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    renderTable();
+    renderOrders();
+    renderLog();
+  </script>
+</body>
+</html>
